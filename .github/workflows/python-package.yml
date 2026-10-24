@@ -103,6 +103,8 @@ jobs:
       uses: coverallsapp/github-action@v2
       with:
         file: coverage.xml
+        # The Cobertura uploader ignores XML <sources>; retain repository paths.
+        base-path: pyobjus
         fail-on-error: false
 
     - name: Retain coverage diagnostics
