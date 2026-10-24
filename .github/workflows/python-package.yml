@@ -7,6 +7,9 @@ jobs:
 
     name: "build (${{ matrix.runs_on }}, ${{ matrix.python }})"
     runs-on: ${{ matrix.runs_on }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       matrix:
         runs_on: ['macos-latest', 'macos-15-intel']
@@ -29,86 +32,93 @@ jobs:
         python-version: ${{ matrix.python }}
 
     - name: Install CI/CD requirements
+      if: matrix.coverage != true
       run: |
         pip install -r .ci/cicd-requirements.txt
 
     - name: Install project
+      if: matrix.coverage != true
       run: |
-        pip install -e .
+        mkdir -p build
+        python -m pip install --verbose -e . 2>&1 | tee build/ordinary-install.log
+
+    - name: Check ordinary build controls
+      if: matrix.coverage != true
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+        log = Path('build/ordinary-install.log').read_text()
+        for macro in ('CYTHON_TRACE', 'CYTHON_USE_SYS_MONITORING'):
+            if '-D' + macro in log:
+                raise SystemExit('Ordinary build unexpectedly enabled ' + macro)
+        PY
+
+    - name: Install coverage requirements
+      if: matrix.coverage == true
+      run: |
+        mkdir -p build/coverage
+        python -m pip install -r .ci/coverage-requirements.txt 2>&1 | tee build/coverage/requirements.log
+        python -m pip check 2>&1 | tee build/coverage/dependency-check.log
+
+    - name: Install instrumented project
+      if: matrix.coverage == true
+      env:
+        PYOBJUS_COVERAGE: '1'
+      run: |
+        clang --version | tee build/coverage/compiler.log
+        python -m pip install --no-build-isolation -e . 2>&1 | tee build/coverage/install.log
+        python setup.py build_ext --inplace --force 2>&1 | tee build/coverage/build.log
+
+    - name: Verify coverage fidelity and accounting
+      if: matrix.coverage == true
+      run: python -m pytest tools/coverage/tests -q 2>&1 | tee build/coverage/fidelity-tests.log
 
     - name: Build test libraries
-      run: make test_lib
+      run: make test_lib 2>&1 | tee build/test-libraries.log
 
     - name: Test with pytest
       if: matrix.coverage != true
       run: python -m pytest tests -v
 
-    # Standard Python tracing does not cover the compiled Cython/Objective-C code.
-    - name: Test with Python coverage
+    # Exclude import pyobjus from hits; retain the full traceable-source inventory.
+    - name: Test with post-bootstrap Python and Cython coverage
       if: matrix.coverage == true
-      run: python -m pytest tests -v --cov=pyobjus --cov-report=xml:coverage.xml
+      run: python -m tools.coverage.run 2>&1 | tee build/coverage/pytest.log
 
-    - name: Upload Python coverage to Coveralls
+    - name: Finalize and validate coverage
+      if: matrix.coverage == true
+      run: |
+        python -m tools.coverage.report --output coverage.xml --artifacts build/coverage 2>&1 | tee build/coverage/report.log
+        python -m tools.coverage.report --output coverage.xml --check-fresh 2>&1 | tee build/coverage/fresh-report.log
+        python -m tools.coverage.report --from-artifacts build/coverage --output build/coverage/replayed.xml 2>&1 | tee build/coverage/replay.log
+
+    - name: Check an uncalled native body separately
+      if: matrix.coverage == true
+      run: |
+        python -m tools.coverage.run --data-file build/coverage/.coverage.literals --metadata build/coverage/literals-run.json -- tests/test_literals.py -v 2>&1 | tee build/coverage/literals-pytest.log
+        python -m tools.coverage.report --data-file build/coverage/.coverage.literals --metadata build/coverage/literals-run.json --native-checks literals --output build/coverage/literals.xml 2>&1 | tee build/coverage/literals-report.log
+
+    - name: Upload post-bootstrap Python and Cython coverage to Coveralls
       if: matrix.coverage == true
       uses: coverallsapp/github-action@v2
       with:
         file: coverage.xml
         fail-on-error: false
 
-  cython-coverage-proof:
-    name: "Cython coverage proof (macOS, Python 3.14)"
-    runs-on: macos-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: bash
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python 3.14
-      uses: actions/setup-python@v7
-      with:
-        python-version: '3.14'
-
-    - name: Install coverage proof requirements
-      run: |
-        mkdir -p build/coverage-proof
-        python -m pip install -r .ci/coverage-requirements.txt 2>&1 | tee build/coverage-proof/requirements.log
-        python -m pip check 2>&1 | tee build/coverage-proof/dependency-check.log
-
-    - name: Build instrumented project and test libraries
-      env:
-        PYOBJUS_COVERAGE: '1'
-      run: |
-        clang --version | tee build/coverage-proof/compiler.log
-        python -m pip install --no-build-isolation -e . 2>&1 | tee build/coverage-proof/install.log
-        python setup.py build_ext --inplace --force 2>&1 | tee build/coverage-proof/build.log
-        make test_lib 2>&1 | tee build/coverage-proof/test-libraries.log
-
-    - name: Collect post-bootstrap coverage for the full suite
-      run: python .ci/cython_coverage_proof.py collect --output build/coverage-proof/full 2>&1 | tee build/coverage-proof/pytest.log
-
-    - name: Validate source accounting and fresh reporting
-      run: |
-        python .ci/cython_coverage_proof.py report --output build/coverage-proof/full 2>&1 | tee build/coverage-proof/report.log
-        python .ci/cython_coverage_proof.py report --output build/coverage-proof/full --check-fresh 2>&1 | tee build/coverage-proof/fresh-report.log
-
-    - name: Check an uncalled body with the isolated literals tests
-      run: |
-        python .ci/cython_coverage_proof.py collect --literals --output build/coverage-proof/literals 2>&1 | tee build/coverage-proof/literals-pytest.log
-        python .ci/cython_coverage_proof.py report --output build/coverage-proof/literals 2>&1 | tee build/coverage-proof/literals-report.log
-
-    - name: Retain native proof diagnostics
-      if: always()
+    - name: Retain coverage diagnostics
+      if: always() && matrix.coverage == true
       uses: actions/upload-artifact@v7
       with:
-        name: cython-coverage-proof-macos-py314-${{ github.run_attempt }}
+        name: coverage-macos-py314-${{ github.run_attempt }}
         retention-days: 7
         include-hidden-files: true
         path: |
-          build/coverage-proof/
+          coverage.xml
+          coverage.json
+          .coverage
+          build/coverage-run.json
+          build/test-libraries.log
+          build/coverage/
           pyobjus/*.c
           pyobjus/*.so
           pyobjus/*.pyx
@@ -117,9 +127,17 @@ jobs:
           pyobjus/**/*.py
           setup.py
           pyproject.toml
-          .ci/cython_coverage_proof.py
+          tools/coverage/
           .ci/coverage-requirements.txt
           .ci/cicd-requirements.txt
+
+    - name: Retain ordinary build evidence
+      if: always() && matrix.coverage != true
+      uses: actions/upload-artifact@v7
+      with:
+        name: ordinary-build-${{ matrix.runs_on }}-py${{ matrix.python }}-${{ github.run_attempt }}
+        retention-days: 7
+        path: build/ordinary-install.log
 
   unsupported-platform:
     # pyobjus only builds on macOS and iOS. Elsewhere, building an sdist must

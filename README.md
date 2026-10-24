@@ -4,9 +4,15 @@ Python module for accessing Objective-C classes as Python classes using
 Objective-C runtime reflection.
 
 [![Build Status](https://github.com/kivy/pyobjus/actions/workflows/python-package.yml/badge.svg?branch=master)](https://github.com/kivy/pyobjus/actions/workflows/python-package.yml)
-[![Python coverage](https://coveralls.io/repos/github/kivy/pyobjus/badge.svg?branch=master)](https://coveralls.io/github/kivy/pyobjus?branch=master)
+[![Post-bootstrap Python + Cython line coverage](https://coveralls.io/repos/github/kivy/pyobjus/badge.svg?branch=master)](https://coveralls.io/github/kivy/pyobjus?branch=master)
 [![Backers on Open Collective](https://opencollective.com/kivy/backers/badge.svg)](#backers) 
 [![Sponsors on Open Collective](https://opencollective.com/kivy/sponsors/badge.svg)](#sponsors) 
+
+Coverage measures [post-bootstrap Python + Cython execution](docs/coverage.md):
+`import pyobjus` is excluded from hits, while all traceable lines in the selected
+macOS/Python 3.14 build remain in the denominator. The expanded source set includes
+`.pyx` and executable `.pxi` files. The first integrated publication is pending
+validation; the badge links to the upstream project's published report.
 
 
 ## Quick overview

@@ -1,0 +1,18 @@
+{
+  "mode": "post-bootstrap",
+  "package": "pyobjus",
+  "bootstrap": ["pyobjus"],
+  "extension": "pyobjus.pyobjus",
+  "empty_sources": ["pyobjus/common.pxi", "pyobjus/config.pxi"],
+  "executable_sources": [
+    "pyobjus/pyobjus.pyx",
+    "pyobjus/pyobjus_types.pxi",
+    "pyobjus/pyobjus_conversions.pxi",
+    "pyobjus/type_enc.pxi",
+    "pyobjus/debug.pxi"
+  ],
+  "label": "Post-bootstrap Python + Cython line coverage",
+  "numerator": "product-source line hits after bootstrap, in the main pytest process",
+  "compiled_denominator": "matching generated-C traceable-source inventory",
+  "initialization_only_lines": "retained; missed unless subsequently executed"
+}
