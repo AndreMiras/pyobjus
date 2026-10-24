@@ -55,6 +55,72 @@ jobs:
         file: coverage.xml
         fail-on-error: false
 
+  cython-coverage-proof:
+    name: "Cython coverage proof (macOS, Python 3.14)"
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+
+    - name: Install coverage proof requirements
+      run: |
+        mkdir -p build/coverage-proof
+        python -m pip install -r .ci/coverage-requirements.txt 2>&1 | tee build/coverage-proof/requirements.log
+        python -m pip check 2>&1 | tee build/coverage-proof/dependency-check.log
+
+    - name: Build instrumented project and test libraries
+      env:
+        PYOBJUS_COVERAGE: '1'
+      run: |
+        clang --version | tee build/coverage-proof/compiler.log
+        python -m pip install --no-build-isolation -e . 2>&1 | tee build/coverage-proof/install.log
+        python setup.py build_ext --inplace --force 2>&1 | tee build/coverage-proof/build.log
+        make test_lib 2>&1 | tee build/coverage-proof/test-libraries.log
+
+    - name: Collect post-bootstrap coverage for the full suite
+      run: python .ci/cython_coverage_proof.py collect --output build/coverage-proof/full 2>&1 | tee build/coverage-proof/pytest.log
+
+    - name: Validate source accounting and fresh reporting
+      run: |
+        python .ci/cython_coverage_proof.py report --output build/coverage-proof/full 2>&1 | tee build/coverage-proof/report.log
+        python .ci/cython_coverage_proof.py report --output build/coverage-proof/full --check-fresh 2>&1 | tee build/coverage-proof/fresh-report.log
+
+    - name: Check an uncalled body with the isolated literals tests
+      run: |
+        python .ci/cython_coverage_proof.py collect --literals --output build/coverage-proof/literals 2>&1 | tee build/coverage-proof/literals-pytest.log
+        python .ci/cython_coverage_proof.py report --output build/coverage-proof/literals 2>&1 | tee build/coverage-proof/literals-report.log
+
+    - name: Retain native proof diagnostics
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: cython-coverage-proof-macos-py314-${{ github.run_attempt }}
+        retention-days: 7
+        include-hidden-files: true
+        path: |
+          build/coverage-proof/
+          pyobjus/*.c
+          pyobjus/*.so
+          pyobjus/*.pyx
+          pyobjus/*.pxi
+          pyobjus/*.h
+          pyobjus/**/*.py
+          setup.py
+          pyproject.toml
+          .ci/cython_coverage_proof.py
+          .ci/coverage-requirements.txt
+          .ci/cicd-requirements.txt
+
   unsupported-platform:
     # pyobjus only builds on macOS and iOS. Elsewhere, building an sdist must
     # still work, and installing must fail with a clear error.
